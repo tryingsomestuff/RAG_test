@@ -9,7 +9,7 @@ from langchain_community.embeddings import HuggingFaceBgeEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.chains import RetrievalQA
 
-QUESTION = "What is are ScoreType and EvalType in this code ?.\n\n"
+QUESTION = "How types ScoreType and EvalType are different in this code ?.\n\n"
 
 INPUT_DIR = 'content/Minic'
 DOC_CHUNK_SIZE = 1500
@@ -20,22 +20,35 @@ DEVICE = 'cpu'
 QDRANT_DIR = 'content/local_qdrant'
 QDRANT_COLLECTION = 'my_docs'
 EMBEDDINGS = 'BAAI/bge-small-en-v1.5'
-MODEL = 'codellama/CodeLlama-7b-Instruct-hf'
+MODEL_TYPE = 'PHI'
+if MODEL_TYPE == 'LLAMA':
+    MODEL = 'codellama/CodeLlama-7b-Instruct-hf'
+else:
+    MODEL = 'microsoft/Phi-3-mini-4k-instruct'
 
-B_INST, E_INST = "[INST]", "[/INST]"
-B_SYS, E_SYS = "<<SYS>>\n", "\n<</SYS>>\n\n"
 PROMPT = """You are a helpful modern C++ coding assistant. 
 You should only answer the question once and not have any text after the answer is done. 
 If a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. 
 If you don't know the answer to a question, please don't share false information. 
 Your answer will by short, not more than 100 words, you won't repeat yourself, but you can also include examples of code."""
 
-INSTRUCTION = """CONTEXT:\n\n {context}\n\nQuestion: {question}"""
+def get_prompt_llama():
+    B_INST, E_INST = "[INST]", "[/INST]"
+    B_SYS, E_SYS = "<<SYS>>\n", "\n<</SYS>>\n\n"
 
-def get_prompt(instruction=INSTRUCTION, new_system_prompt=PROMPT ):
-    SYSTEM_PROMPT = B_SYS + new_system_prompt + E_SYS
-    prompt_template =  B_INST + SYSTEM_PROMPT + instruction + E_INST
+    INSTRUCTION = """CONTEXT:\n\n {context}\n\nQuestion: {question}"""    
+    SYSTEM_PROMPT = B_SYS + PROMPT + E_SYS
+    prompt_template =  B_INST + SYSTEM_PROMPT + INSTRUCTION + E_INST
     return prompt_template
+
+def get_prompt_phi3():
+    return """<|system|>""" + PROMPT + """<|end|>""" + """<|user|>
+    Based on those code extracts \n\n
+    {context}
+    \n\n
+    {question}
+    <|end|>
+    <|assistant|>"""
 
 def filter_files(src_dir, dst_dir):
     if not os.path.exists(dst_dir):
@@ -121,6 +134,7 @@ retriever = qdrant.as_retriever()
 print("Loading model")
 llm = HuggingFacePipeline.from_model_id(
     model_id=MODEL,
+    model_kwargs={"trust_remote_code": True},
     task="text-generation",
     device_map=DEVICE,
     pipeline_kwargs={"max_new_tokens": MAX_TOKEN_GENERATED}
@@ -133,8 +147,12 @@ def format_docs(docs):
 print(format_docs(found_docs))
 
 print("Building prompt")
-prompt_template = get_prompt()
-llama_prompt = PromptTemplate(
+if MODEL_TYPE == 'LLAMA':
+    prompt_template = get_prompt_llama()
+else:
+    prompt_template = get_prompt_phi3()
+
+llm_prompt = PromptTemplate(
     template=prompt_template, 
     input_variables=["context", "question"]
 )
@@ -146,7 +164,7 @@ chain = RetrievalQA.from_chain_type(
     retriever=retriever,
     verbose=True,
     return_source_documents=True,
-    chain_type_kwargs={"prompt": llama_prompt, "verbose": True}
+    chain_type_kwargs={"prompt": llm_prompt, "verbose": True}
 )
 
 print("Querying chain")
